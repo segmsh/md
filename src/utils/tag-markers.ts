@@ -7,7 +7,7 @@ import { deleteFields as deletePositionFields } from "./delete-fields.js";
 
 const allowedTagsRegex: RegExp = /^\/?[a-zA-Z]+\d+$/;
 
-const convertMdastTagToHast = (node: any) => {
+const convertMdastTagToHast = (node: any): string => {
   const tag = node.type;
   const tagsMap: Record<string, string> = {
     link: "a",
@@ -23,47 +23,56 @@ const convertMdastTagToHast = (node: any) => {
   return tagsMap[tag] ? tagsMap[tag] : tag;
 };
 
-export const convertMdastTagsToHast = (tags: any) => {
-  let newTags: Record<string, Tag> = {};
-  const tagsMapLinks: Record<string, string> = { url: "href" };
-  const tagsMapImg: Record<string, string> = { url: "src" };
+export const mapMdastTagAttributesToHast = (
+  tags: Record<string, Record<string, unknown>>,
+): Record<string, Tag> => {
+  let convertedTags: Record<string, Tag> = {};
+  const linkAttributeMap: Record<string, string> = { url: "href" };
+  const imageAttributeMap: Record<string, string> = { url: "src" };
 
   for (const key in tags) {
     if (tags.hasOwnProperty(key)) {
-      const innerObject = tags[key];
-      const transformedInnerObject: Tag = {};
-      const tagsMap = key.includes("img") ? tagsMapImg : tagsMapLinks;
+      const tagAttributes = tags[key];
+      const convertedAttributes: Tag = {};
+      const attributeMap = key.includes("img")
+        ? imageAttributeMap
+        : linkAttributeMap;
 
-      for (const innerKey in innerObject) {
-        if (innerObject.hasOwnProperty(innerKey)) {
-          let tagAttributeValue = innerObject[innerKey];
+      for (const innerKey in tagAttributes) {
+        if (tagAttributes.hasOwnProperty(innerKey)) {
+          let attributeValue = tagAttributes[innerKey];
 
-          if (typeof tagAttributeValue === "object") {
-            deletePositionFields(tagAttributeValue);
-            tagAttributeValue = JSON.stringify(tagAttributeValue);
+          if (typeof attributeValue === "object") {
+            deletePositionFields(attributeValue);
+            attributeValue = JSON.stringify(attributeValue);
           }
 
-          transformedInnerObject[tagsMap[innerKey] || innerKey] = tagAttributeValue;
+          convertedAttributes[attributeMap[innerKey] || innerKey] = String(
+            attributeValue,
+          );
         }
       }
 
-      newTags[key] = transformedInnerObject;
+      convertedTags[key] = convertedAttributes;
     }
   }
 
-  return newTags;
+  return convertedTags;
 };
 
-function parseHTMLTags(html: string) {
+function extractHtmlTagInfo(html: string): {
+  tagName: string;
+  htmlAttributes: Record<string, string>;
+} {
   if (!html || html.length < 2) return { tagName: "", htmlAttributes: {} };
   const isUpperCaseCapitalLetter = html[1] === html[1].toUpperCase();
 
   const tree = unified()
     .use(rehypeParse, { fragment: true })
-    .parse(html);
+    .parse(html) as any;
 
   let tagName = "";
-  let htmlAttributes = {};
+  let htmlAttributes: Record<string, string> = {};
 
   tree.children.forEach((node: any) => {
     if (node.type === "element") {
@@ -72,12 +81,12 @@ function parseHTMLTags(html: string) {
         tagName = tagName.charAt(0).toUpperCase() + tagName.slice(1);
       }
 
-      const attributes: any = {};
+      const attributes: Record<string, string> = {};
       for (const [key, value] of Object.entries(node.properties || {})) {
         if (key === "className" && Array.isArray(value)) {
           attributes.class = value.join(" ");
         } else if (key === "htmlFor") {
-          attributes.for = value;
+          attributes.for = String(value);
         } else if (value === true) {
           attributes[key] = "";
         } else {
@@ -91,17 +100,17 @@ function parseHTMLTags(html: string) {
   return { tagName, htmlAttributes };
 }
 
-export function convertMdastNodeToText(node: any, mdast?: any) {
+export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
   let resultNodeText = "";
   let tagCount = 0;
-  let tags: Record<string, Tag> = {};
+  let collectedTags: Record<string, Tag> = {};
   const htmlTags: number[] = [];
 
   const nodeToString = (childNode: any): string => {
     if (childNode.type === "linkReference" && mdast) {
       visitParents(
         mdast,
-        (mdastChild) =>
+        (mdastChild: any) =>
           mdastChild.type === "definition" &&
           "identifier" in mdastChild &&
           mdastChild.identifier === childNode.identifier,
@@ -116,20 +125,22 @@ export function convertMdastNodeToText(node: any, mdast?: any) {
 
     if (childNode.type === "html") {
       let value = "";
-      const { tagName, htmlAttributes } = parseHTMLTags(childNode.value);
+      const { tagName, htmlAttributes } = extractHtmlTagInfo(childNode.value);
       const closingTag = /^<\/\w+>$/;
       let tagCountTemp = tagCount;
 
       if (closingTag.test(childNode.value)) {
         tagCountTemp = htmlTags.pop()!;
-        const tagName = childNode.value.replace(/[<>]/g, "");
-        value = `{${tagName}${tagCountTemp}}`;
+        const closingTagName = childNode.value.replace(/[<>]/g, "");
+        value = `{${closingTagName}${tagCountTemp}}`;
       }
 
       if (tagName) {
         value = `{${tagName}${tagCountTemp}}`;
-        tags[tagName + tagCountTemp] = { ...htmlAttributes };
-        if (childNode.marker) tags[tagName + tagCountTemp].marker = childNode.marker;
+        collectedTags[tagName + tagCountTemp] = { ...htmlAttributes };
+        if (childNode.marker) {
+          collectedTags[tagName + tagCountTemp].marker = childNode.marker;
+        }
         htmlTags.push(tagCount);
         tagCount++;
       }
@@ -179,16 +190,19 @@ export function convertMdastNodeToText(node: any, mdast?: any) {
 
   const setTags = (childNode: any, tag: string): void => {
     const tagTypeList = ["url", "title", "alt", "marker", "identifier", "data"];
-    const attr: any = {};
+    const tagAttributes: Record<string, unknown> = {};
 
     tagTypeList.forEach((tagType) => {
       if (childNode[tagType]) {
-        attr[tagType] = childNode[tagType];
+        tagAttributes[tagType] = childNode[tagType];
       }
     });
 
-    if (Object.keys(attr).length > 0) {
-      tags[tag] = { ...tags[tag], ...attr };
+    if (Object.keys(tagAttributes).length > 0) {
+      collectedTags[tag] = {
+        ...collectedTags[tag],
+        ...(tagAttributes as Record<string, string>),
+      };
     }
   };
 
@@ -200,9 +214,9 @@ export function convertMdastNodeToText(node: any, mdast?: any) {
     type: "text",
     value: resultNodeText,
     tags:
-      Object.keys(tags).length > 0
+      Object.keys(collectedTags).length > 0
         ? {
-            tags: JSON.stringify(tags, (_key, value) =>
+            tags: JSON.stringify(collectedTags, (_key, value) =>
               typeof value === "bigint" ? value.toString() : value,
             ),
           }
@@ -210,9 +224,9 @@ export function convertMdastNodeToText(node: any, mdast?: any) {
   };
 }
 
-export function parseStringToStructure(segment: Segment): Element[] {
+export function parseTaggedTextToElements(segment: Segment): Element[] {
   const text: string = segment.text;
-  const stack = [];
+  const stack: any[] = [];
   let currentText = "";
 
   const isSerializedObject = (value: unknown): value is string =>
@@ -256,16 +270,16 @@ export function parseStringToStructure(segment: Segment): Element[] {
 
       if (tag.startsWith("/")) {
         const closingTag: string = tag.substring(1);
-        const elements = [];
+        const childNodes: any[] = [];
 
         while (stack.length > 0) {
-          const element: any = stack.pop();
+          const element = stack.pop();
           if (element.type === "element" && element.tagName === closingTag) {
-            element.children = elements;
+            element.children = childNodes;
             stack.push(element);
             break;
           }
-          elements.unshift(element);
+          childNodes.unshift(element);
         }
       } else {
         stack.push({

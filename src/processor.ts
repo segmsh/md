@@ -44,14 +44,14 @@ import {
 } from "./handlers/mdast-to-hast/handlers.js";
 import { toHtmlSafe } from "./utils/to-html-safe.js";
 import {
-  AVOID_HTML_TAGS,
-  AVOID_HTML_TYPE,
+  avoidHtmlTags,
+  avoidHtmlType,
   PlaceholderContent,
   replaceHtmlBeforeMdast,
 } from "./utils/html.js";
 import { Parent } from "mdast";
 import YamlProcessor from "@segmsh/yaml";
-import { convertMdastNodeToText } from "./utils/tag-markers.js";
+import { serializeMdastNodeToTaggedText } from "./utils/tag-markers.js";
 import {
   getChildrenContentLength,
   hastToSegments,
@@ -247,10 +247,10 @@ const prepareMdast = (option: {
               );
               const isNotCodeNode = !["code", "inlineCode"].includes(node.type);
               if (
-                AVOID_HTML_TAGS.includes(placeholder.tagName) &&
+                avoidHtmlTags.includes(placeholder.tagName) &&
                 isNotCodeNode
               ) {
-                node.type = AVOID_HTML_TYPE;
+                node.type = avoidHtmlType;
               }
             });
           }
@@ -265,7 +265,7 @@ const convertToHtmlType = () => {
   const transformer = (ast: HastRoot) => {
     visitParents(
       ast,
-      (node) => "properties" in node || node.type === AVOID_HTML_TYPE,
+      (node) => "properties" in node || node.type === avoidHtmlType,
       (node: any, parent) => {
         if (node?.properties?.marker === "html") {
           visitParents(
@@ -289,7 +289,7 @@ const convertToHtmlType = () => {
           );
           if (node.tagName !== "li") node.type = "html";
         }
-        if (node.type === AVOID_HTML_TYPE) node.type = "html";
+        if (node.type === avoidHtmlType) node.type = "html";
       },
     );
   };
@@ -314,7 +314,7 @@ class MdProcessor implements Processor {
   private yamlProcessor: YamlProcessor;
   private mdastToHastHandlers: Record<string, Function> = {};
   private hastToMdastHandlers: Record<string, Function> = {};
-  private passThroughTypes: string[] = ["yaml", "definition", AVOID_HTML_TYPE];
+  private passThroughTypes: string[] = ["yaml", "definition", avoidHtmlType];
   protected mdast: any = {};
 
   constructor() {
@@ -493,7 +493,7 @@ class MdProcessor implements Processor {
   }
 
   protected mdParagraphHandler(state: any, node: any, mdast: MdastRoot) {
-    const segment: any = convertMdastNodeToText(node, mdast);
+    const segment: any = serializeMdastNodeToTaggedText(node, mdast);
     const tagName: string = node.depth ? "h" + node.depth : "p";
     return segmentParentNodeToHast(state, node, segment, tagName);
   }
@@ -614,7 +614,7 @@ class MdProcessor implements Processor {
               : false;
 
             visitParents(node, { type: "tableCell" }, (child) => {
-              const segment: any = convertMdastNodeToText(child);
+              const segment: any = serializeMdastNodeToTaggedText(child);
               let cell: any;
 
               if (segment !== null && segment.type !== "text") {

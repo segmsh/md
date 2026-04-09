@@ -1,13 +1,27 @@
 import { Heading, Paragraph } from "mdast";
-import { Element } from "hast";
+import { Element, ElementContent, Properties } from "hast";
+
+type MdastToHastState = {
+  all(node: Heading | Paragraph): ElementContent[];
+};
+
+type TaggedSegment = {
+  tags?: Properties;
+};
+
+type MarkerNode = {
+  marker?: string;
+  properties?: Properties;
+  type: string;
+};
 
 export const segmentParentNodeToHast = (
-  state: any,
+  state: MdastToHastState,
   node: (Heading | Paragraph) & { marker?: string },
-  segment: any,
+  segment: TaggedSegment | null,
   tagName: string
-): any => {
-  node.children = segment ? [segment] : [];
+): Element => {
+  node.children = segment ? [segment as never] : [];
 
   const resultHast: Element = {
     type: "element",
@@ -21,7 +35,7 @@ export const segmentParentNodeToHast = (
   return resultHast;
 };
 
-export const breakHandler =  (node: any): Element => {
+export const breakHandler = (node: MarkerNode): Element => {
   const result: Element = {
     properties: { ...node.properties, marker: node.marker || "" },
     type: "element",
@@ -29,4 +43,4 @@ export const breakHandler =  (node: any): Element => {
     children: [],
   };
   return result;
-}
+};

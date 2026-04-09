@@ -6,13 +6,13 @@ import { BlockContent, Delete, Link, Nodes, Paragraph, PhrasingContent, RootCont
 
 type ParentWithChildren = { children: any[] }
 
-export function wrapNeeded(nodes: Nodes[]): boolean {
+export function needsWrapping(nodes: Nodes[]): boolean {
   let index = -1
 
   while (++index < nodes.length) {
     const node = nodes[index]
 
-    if (!phrasing(node) || ('children' in node && wrapNeeded(node.children as Nodes[]))) {
+    if (!phrasing(node) || ('children' in node && needsWrapping(node.children as Nodes[]))) {
       return true
     }
   }
@@ -21,13 +21,13 @@ export function wrapNeeded(nodes: Nodes[]): boolean {
 }
 
 export function wrap(nodes: RootContent[]): BlockContent[] {
-  return runs(nodes, onphrasing, function (d: any) {
-    return d
+  return runs(nodes, onphrasing, function (blockNode: any) {
+    return blockNode
   })
 
   function onphrasing(nodes: PhrasingContent[]): Paragraph[] {
-    return nodes.every(function (d) {
-      return d.type === 'text' ? whitespace(d.value) : false
+    return nodes.every(function (contentNode) {
+      return contentNode.type === 'text' ? whitespace(contentNode.value) : false
     })
       ? []
       : [{type: 'paragraph', children: dropSurroundingBreaks(nodes)} as Paragraph]
@@ -38,21 +38,23 @@ function split(node: Delete | Link): BlockContent[] {
   return runs(node.children, onphrasing, onnonphrasing)
 
   function onphrasing(nodes: PhrasingContent[]): BlockContent[] {
-    const newParent = cloneWithoutChildren(node) as Delete | Link
-    ;(newParent as ParentWithChildren).children = nodes
-    return [newParent as unknown as BlockContent]
+    const clonedParent = cloneWithoutChildren(node) as Delete | Link
+    const parentWithChildren = clonedParent as ParentWithChildren
+    parentWithChildren.children = nodes
+    return [clonedParent as unknown as BlockContent]
   }
 
-  function onnonphrasing(child: BlockContent): BlockContent {
-    if ('children' in child && 'children' in node) {
-      const newParent = cloneWithoutChildren(node) as Delete | Link
-      const newChild = cloneWithoutChildren(child) as BlockContent & ParentWithChildren
-      ;(newParent as ParentWithChildren).children = (child as ParentWithChildren).children
-      newChild.children.push(newParent as unknown as BlockContent)
-      return newChild as BlockContent
+  function onnonphrasing(blockNode: BlockContent): BlockContent {
+    if ('children' in blockNode && 'children' in node) {
+      const clonedParent = cloneWithoutChildren(node) as Delete | Link
+      const clonedBlock = cloneWithoutChildren(blockNode) as BlockContent & ParentWithChildren
+      const parentWithChildren = clonedParent as ParentWithChildren
+      parentWithChildren.children = (blockNode as ParentWithChildren).children
+      clonedBlock.children.push(clonedParent as unknown as BlockContent)
+      return clonedBlock as BlockContent
     }
 
-    return {...child}
+    return {...blockNode}
   }
 }
 
@@ -98,7 +100,7 @@ function flatten(nodes: RootContent[]): RootContent[] {
 
     if (
       (node.type === 'delete' || node.type === 'link') &&
-      wrapNeeded(node.children)
+      needsWrapping(node.children)
     ) {
       flattened.push(...split(node))
     } else {

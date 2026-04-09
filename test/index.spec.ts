@@ -14,13 +14,13 @@ function processAndCompare(filename: string) {
   });
 
   const doc = processor.parse(inDoc);
-  const docStr = JSON.stringify(doc);
+  const parsedDocumentJson = JSON.stringify(doc);
 
-  const outDoc = processor.stringify(doc);
-  const outDocStructure = processor.parse(outDoc);
-  const outDocStructureStr = JSON.stringify(outDocStructure);
+  const stringifiedDocument = processor.stringify(doc);
+  const roundTrippedDocument = processor.parse(stringifiedDocument);
+  const roundTrippedDocumentJson = JSON.stringify(roundTrippedDocument);
 
-  assert.equal(outDocStructureStr, docStr);
+  assert.equal(roundTrippedDocumentJson, parsedDocumentJson);
   console.log(filename);
 }
 

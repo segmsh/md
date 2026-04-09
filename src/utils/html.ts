@@ -1,5 +1,5 @@
-export const AVOID_HTML_TYPE: string = "html!";
-export const AVOID_HTML_TAGS: string[] = ["iframe", "html"];
+export const avoidHtmlType: string = "html!";
+export const avoidHtmlTags: string[] = ["iframe", "html"];
 
 export interface PlaceholderContent {
   content: string;
@@ -9,60 +9,60 @@ export interface PlaceholderContent {
   tagName: string;
 }
 
-const getTagArray = (str: string, tagName: string): string[] => {
-  const regexp: RegExp = new RegExp(`(?:<)(\/?${tagName}.*?)(?=>)`, "g");
-  const strItem: string[] = [];
+const extractTagSequence = (source: string, tagName: string): string[] => {
+  const tagPattern: RegExp = new RegExp(`(?:<)(\/?${tagName}.*?)(?=>)`, "g");
+  const tagMatches: string[] = [];
 
-  const matches = str.match(regexp);
+  const matches = source.match(tagPattern);
 
   if (matches) {
     for (const match of matches) {
-      const tag = match.slice(1);
-      strItem.push(tag);
+      const matchedTag = match.slice(1);
+      tagMatches.push(matchedTag);
     }
   }
 
-  return strItem;
+  return tagMatches;
 };
 
-const fetchNestedTags = (str: string, tagName: string): string | null => {
+const extractNestedTagContent = (source: string, tagName: string): string | null => {
   const closeTagRegExp: RegExp = new RegExp(`</${tagName}>`);
   const openTagRegExp: RegExp = new RegExp(`<${tagName}.*?>`, "m");
 
-  const tagArr: string[] = getTagArray(str, tagName);
+  const tagSequence: string[] = extractTagSequence(source, tagName);
 
   let currentIndex: number = 0;
   let openTagCounter: number = 0;
   let closeTagCounter: number = 0;
 
-  let indexIncrement: number = tagName.length + 2;
+  const indexIncrement: number = tagName.length + 2;
 
-  const nestedContent: string = tagArr.reduce((acc, tag) => {
+  const nestedContent: string = tagSequence.reduce((contentBetweenTags, tag) => {
     const isCloseTag = !tag.indexOf("/");
 
     if (isCloseTag) {
       closeTagCounter++;
-      const closeTagIndex: number = str.indexOf(tag, currentIndex);
+      const closeTagIndex: number = source.indexOf(tag, currentIndex);
       currentIndex = closeTagIndex + indexIncrement;
     } else {
       openTagCounter++;
-      const openTagIndex: number = str.indexOf(tag, currentIndex);
+      const openTagIndex: number = source.indexOf(tag, currentIndex);
       currentIndex = openTagIndex + indexIncrement;
     }
 
-    if (openTagCounter === closeTagCounter && !acc) {
-      const matchCloseTag: any[] | null = str.match(closeTagRegExp);
-      const matchOpenTag: any[] | null = str.match(openTagRegExp);
+    if (openTagCounter === closeTagCounter && !contentBetweenTags) {
+      const closingTagMatch: any[] | null = source.match(closeTagRegExp);
+      const openingTagMatch: any[] | null = source.match(openTagRegExp);
 
-      if (matchOpenTag && matchCloseTag) {
-        acc = str.substr(
-          matchOpenTag[0].length,
-          currentIndex - matchCloseTag[0].length - matchOpenTag[0].length
+      if (openingTagMatch && closingTagMatch) {
+        contentBetweenTags = source.substr(
+          openingTagMatch[0].length,
+          currentIndex - closingTagMatch[0].length - openingTagMatch[0].length
         );
-        return acc;
+        return contentBetweenTags;
       }
     }
-    return acc;
+    return contentBetweenTags;
   }, "");
 
   return openTagCounter === closeTagCounter || nestedContent
@@ -73,31 +73,31 @@ const fetchNestedTags = (str: string, tagName: string): string | null => {
 export const replaceHtmlBeforeMdast = (
   markdownString: string
 ): { docWithHtmlPlaceholders: string; contentsAvoidMarkdown: PlaceholderContent[] } => {
-  const HTML_SIMPLE_TAG: RegExp =
+  const htmlSimpleTagPattern: RegExp =
     /((<(pre|code|var|html|aside|blockquote|body|dl|details|div|figure|footer|head|header|iframe|main|noscript|object|ol|q|ruby|samp|script|section|style|table|template|ul).*?>)((?:.|\n|\r\n)*?))(<\/\3>)/g;
 
-  const MD_HTML_PLACEHOLDER_: string = "MD_HTML_PLACEHOLDER_";
+  const mdHtmlPlaceholderPrefix: string = "MD_HTML_PLACEHOLDER_";
 
   const contentsAvoidMarkdown: PlaceholderContent[] = [];
-  let markdownStringCopy: string = markdownString;
+  let rewrittenMarkdown: string = markdownString;
 
-  let matchedElem;
+  let matchedTag;
   let index: number = 0;
-  while ((matchedElem = HTML_SIMPLE_TAG.exec(markdownString)) !== null) {
+  while ((matchedTag = htmlSimpleTagPattern.exec(markdownString)) !== null) {
     index++;
 
-    const fullTag: string = matchedElem[0];
-    const openTag: string = matchedElem[2];
-    const closedTag: string = matchedElem[5];
-    const tagName: string = matchedElem[3];
-    const tagContent: string = matchedElem[4];
+    const fullTag: string = matchedTag[0];
+    const openTag: string = matchedTag[2];
+    const closedTag: string = matchedTag[5];
+    const tagName: string = matchedTag[3];
+    const tagContent: string = matchedTag[4];
 
     const openTagRegExp: RegExp = new RegExp(`<${tagName}.*?>`, "m");
-    const tagContentMatch: any[] | null = tagContent.match(openTagRegExp);
+    const nestedOpenTagMatch: any[] | null = tagContent.match(openTagRegExp);
 
-    if (tagContentMatch) {
+    if (nestedOpenTagMatch) {
       const startTagIndex: number = markdownString.indexOf(fullTag);
-      const content: string | null = fetchNestedTags(
+      const content: string | null = extractNestedTagContent(
         markdownString.slice(startTagIndex, markdownString.length - 1),
         tagName
       );
@@ -107,7 +107,7 @@ export const replaceHtmlBeforeMdast = (
           contentsAvoidMarkdown: [],
         };
       }
-      const placeholder: string = MD_HTML_PLACEHOLDER_ + index;
+      const placeholder: string = mdHtmlPlaceholderPrefix + index;
 
       contentsAvoidMarkdown.push({
         placeholder: openTag + placeholder + closedTag,
@@ -117,9 +117,9 @@ export const replaceHtmlBeforeMdast = (
         tagName
       });
 
-      markdownStringCopy = markdownStringCopy.replace(content, placeholder);
+      rewrittenMarkdown = rewrittenMarkdown.replace(content, placeholder);
     } else {
-      const placeholder: string = MD_HTML_PLACEHOLDER_ + index;
+      const placeholder: string = mdHtmlPlaceholderPrefix + index;
 
       contentsAvoidMarkdown.push({
         placeholder: openTag + placeholder + closedTag,
@@ -129,25 +129,25 @@ export const replaceHtmlBeforeMdast = (
         tagName
       });
 
-      const isCodeBlockOnMarkDown = defineIsCodeBlock(
-        markdownStringCopy,
+      const isCodeBlockInMarkdown = isIndentedCodeBlockContext(
+        rewrittenMarkdown,
         fullTag
       );
-      if (!isCodeBlockOnMarkDown)
-        markdownStringCopy = markdownStringCopy.replace(
+      if (!isCodeBlockInMarkdown)
+        rewrittenMarkdown = rewrittenMarkdown.replace(
           fullTag,
           openTag + placeholder + closedTag
         );
     }
   }
 
-  function defineIsCodeBlock(
-    markdownStringCopy: string,
+  function isIndentedCodeBlockContext(
+    markdownSource: string,
     fullTag: string
   ): boolean {
-    const endIndex: number = markdownStringCopy.indexOf(fullTag);
+    const endIndex: number = markdownSource.indexOf(fullTag);
     const startIndex: number = endIndex < 8 ? 0 : endIndex - 8;
-    const searchString: string = markdownStringCopy.slice(
+    const surroundingSource: string = markdownSource.slice(
       startIndex,
       endIndex
     );
@@ -157,10 +157,10 @@ export const replaceHtmlBeforeMdast = (
     const lineBreakLinux = "\r\n";
 
     return (
-      searchString.includes(`${lineBreakLinux}${lineBreakLinux}${tab}`) ||
-      searchString.includes(`${lineBreak}${lineBreak}${tab}`)
+      surroundingSource.includes(`${lineBreakLinux}${lineBreakLinux}${tab}`) ||
+      surroundingSource.includes(`${lineBreak}${lineBreak}${tab}`)
     );
   }
 
-  return { docWithHtmlPlaceholders: markdownStringCopy, contentsAvoidMarkdown };
+  return { docWithHtmlPlaceholders: rewrittenMarkdown, contentsAvoidMarkdown };
 };

@@ -5,8 +5,11 @@ import YamlProcessor from "@segmsh/yaml";
 import { SegmentsMap } from "../types.js";
 import { ListTypes } from "../handlers/hast-to-mdast/handlers.js";
 import { hastToString } from "./hast.js";
-import { AVOID_HTML_TYPE } from "./html.js";
-import { convertMdastTagsToHast, parseStringToStructure } from "./tag-markers.js";
+import { avoidHtmlType } from "./html.js";
+import {
+  mapMdastTagAttributesToHast,
+  parseTaggedTextToElements,
+} from "./tag-markers.js";
 
 export const getChildrenContentLength = (node: Element): number => {
   return node.children.reduce((acc: number, child: any) => {
@@ -16,8 +19,7 @@ export const getChildrenContentLength = (node: Element): number => {
 };
 
 const isListNode = (node: Element): boolean =>
-  "tagName" in node &&
-  (node.tagName === ListTypes.ul || node.tagName === ListTypes.ol);
+  node.tagName === ListTypes.ul || node.tagName === ListTypes.ol;
 
 const getElementFromConvertedNode = (
   node: Element,
@@ -120,7 +122,7 @@ export function hastToSegments(
     if (
       node.type === "comment" ||
       node.type === "definition" ||
-      node.type === AVOID_HTML_TYPE
+      node.type === avoidHtmlType
     ) {
       return node;
     }
@@ -137,7 +139,7 @@ export function hastToSegments(
   tree.children.forEach((child: any) => {
     visitParents(child, { type: "element" }, (node: any) => {
       if (node.properties?.tags) {
-        node.children[0].tags = convertMdastTagsToHast(
+        node.children[0].tags = mapMdastTagAttributesToHast(
           JSON.parse(node.properties.tags),
         );
         delete node.properties.tags;
@@ -196,7 +198,7 @@ export function segmentsToHast(data: Document): Root {
   });
 
   visitParents(data.tree, { type: "segment" }, (node: any, parent) => {
-    const structure: Element[] = parseStringToStructure(segmentsMap[node.id]);
+    const structure: Element[] = parseTaggedTextToElements(segmentsMap[node.id]);
     const parentNode = parent[parent.length - 1];
     const indexElement = parentNode.children.findIndex(
       (child: any): boolean => child.id === node.id,
