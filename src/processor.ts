@@ -17,21 +17,18 @@ import {
 import {
   Document,
   Processor,
-  Segment,
   Value,
   root,
 } from "@segmsh/core";
 
 import {
   Code,
-  Definition,
   Heading,
   Link,
   List,
   Paragraph,
   Root as MdastRoot,
   Strong,
-  Table,
 } from "mdast";
 import type { Info, State } from "mdast-util-to-markdown";
 import { removePosition } from "unist-util-remove-position";
@@ -92,6 +89,7 @@ const keepMarkerPlugin = (option: { doc: string }) => {
           "break",
         ].includes(node.type),
       (node: any, parent) => {
+        if (!node.position) return;
         let marker: string = doc.charAt(node.position?.start?.offset);
         switch (node.type) {
           case "strong": {
@@ -323,7 +321,7 @@ const footNotePlugin = () => {
   return transformer;
 };
 
-class MdProcessor implements Processor {
+export default class MdProcessor implements Processor {
   private yamlProcessor: YamlProcessor;
   private mdastToHastHandlers: Record<string, Function> = {};
   private hastToMdastHandlers: Record<string, Function> = {};
@@ -353,7 +351,7 @@ class MdProcessor implements Processor {
           const strCode = unified()
             .use(stringify, { fences: false })
             .stringify(codeIndented);
-          return strCode.trimRight();
+          return strCode.trimEnd();
         }
         const exit = state.enter("codeIndented");
         const lineBreak = marker ? "\n" : "";
@@ -454,7 +452,7 @@ class MdProcessor implements Processor {
               after: marker,
               ...tracker.current(),
             })
-            ?.trimRight(),
+            ?.trimEnd(),
         );
         value += tracker.move(marker === "<strong>" ? "</strong>" : marker);
         exit();
@@ -769,103 +767,103 @@ class MdProcessor implements Processor {
         },
         {
           newlines: true,
-        nodeHandlers: {
-          definition: (h: any, node: any) => node,
-          footnoteDefinition: (h: any, node: any) => {
-            const children = h.all(node);
+          nodeHandlers: {
+            definition: (h: any, node: any) => node,
+            footnoteDefinition: (h: any, node: any) => {
+              const children = h.all(node);
 
-            const textWithLabel = children[0].children[0].value;
-            const label = textWithLabel.slice(
-              textWithLabel.indexOf("[^") + 2,
-              textWithLabel.indexOf("]:"),
-            );
-
-            children[0].children[0].value = textWithLabel.replace(
-              `[^${label}]: `,
-              "",
-            );
-
-            return {
-              type: "footnoteDefinition",
-              identifier: label,
-              label,
-              children: children,
-            };
-          },
-          html: (h: any, node: any) => {
-            node?.properties?.marker === "html" &&
-              delete node?.properties?.marker;
-
-            const isAvoidHtmlType: string | undefined = node.value;
-            if (isAvoidHtmlType) {
-              return {
-                type: "paragraph",
-                children: [{ type: "text", value: node.value } as HastText],
-              };
-            }
-            const isTagWithHtmlSyntaxInside: boolean = [
-              "table",
-              "ul",
-              "ol",
-              "div",
-              "dl",
-            ].includes(node.tagName);
-
-            if (isTagWithHtmlSyntaxInside) {
-              visitParents(
-                node,
-                (node) => node.type === "html",
-                (child, _) => {
-                  child.type = "element";
-                  delete child?.properties?.marker;
-                },
+              const textWithLabel = children[0].children[0].value;
+              const label = textWithLabel.slice(
+                textWithLabel.indexOf("[^") + 2,
+                textWithLabel.indexOf("]:"),
               );
-            }
-            const outerHtml: string = toHtmlSafe(
-              {
-                ...node,
-                type: "element",
-                children: isTagWithHtmlSyntaxInside ? node.children : [],
-              },
-              { allowDangerousCharacters: true, allowDangerousHtml: true },
-            );
 
-            if (isTagWithHtmlSyntaxInside) {
+              children[0].children[0].value = textWithLabel.replace(
+                `[^${label}]: `,
+                "",
+              );
+
+              return {
+                type: "footnoteDefinition",
+                identifier: label,
+                label,
+                children: children,
+              };
+            },
+              html: (h: any, node: any) => {
+              node?.properties?.marker === "html" &&
+                delete node?.properties?.marker;
+
+              const isAvoidHtmlType: string | undefined = node.value;
+              if (isAvoidHtmlType) {
+                return {
+                  type: "paragraph",
+                  children: [{ type: "text", value: node.value } as HastText],
+                };
+              }
+              const isTagWithHtmlSyntaxInside: boolean = [
+                "table",
+                "ul",
+                "ol",
+                "div",
+                "dl",
+              ].includes(node.tagName);
+
+              if (isTagWithHtmlSyntaxInside) {
+                visitParents(
+                  node,
+                  (node) => node.type === "html",
+                  (child, _) => {
+                    child.type = "element";
+                    delete child?.properties?.marker;
+                  },
+                );
+              }
+              const outerHtml: string = toHtmlSafe(
+                {
+                  ...node,
+                  type: "element",
+                  children: isTagWithHtmlSyntaxInside ? node.children : [],
+                },
+                { allowDangerousCharacters: true, allowDangerousHtml: true },
+              );
+
+              if (isTagWithHtmlSyntaxInside) {
+                return {
+                  type: "paragraph",
+                  children: [{ type: "text", value: outerHtml }],
+                };
+              }
+
+              const index: number = outerHtml.indexOf("></");
+              const innerNodes = h.all(node);
+              const htmlLevel: any = {
+                properties: node.properties,
+                type: "paragraph",
+                children: [
+                  { type: "text", value: outerHtml.slice(0, index + 1) },
+                  ...innerNodes,
+                  { type: "text", value: outerHtml.slice(index + 1) },
+                ],
+              };
+              return htmlLevel;
+            },
+              yaml: (h: any, node: any) => {
+              const yamlStr = this.stringifyYamlNode(node, data);
+
               return {
                 type: "paragraph",
-                children: [{ type: "text", value: outerHtml }],
+                position: undefined,
+                children: [
+                  {
+                    type: "text",
+                    value: `---\n${yamlStr}---`,
+                  },
+                ],
               };
-            }
-
-            const index: number = outerHtml.indexOf("></");
-            const innerNodes = h.all(node);
-            const htmlLevel: any = {
-              properties: node.properties,
-              type: "paragraph",
-              children: [
-                { type: "text", value: outerHtml.slice(0, index + 1) },
-                ...innerNodes,
-                { type: "text", value: outerHtml.slice(index + 1) },
-              ],
-            };
-            return htmlLevel;
+            },
           },
-          yaml: (h: any, node: any) => {
-            const yamlStr = this.stringifyYamlNode(node, data);
-
-            return {
-              type: "paragraph",
-              position: undefined,
-              children: [
-                {
-                  type: "text",
-                  value: `---\n${yamlStr}---`,
-                },
-              ],
-            };
-          },
-        },
-        handlers: {
+          handlers: {
           pre: (h: any, node: any) => {
             const isPreCodeWrapper =
               node.children.length === 1 && node.children[0].tagName === "code";
@@ -944,5 +942,3 @@ class MdProcessor implements Processor {
   }
 
 }
-
-export default MdProcessor;
