@@ -3,7 +3,7 @@ import { Element } from "hast";
 
 export const segmentParentNodeToHast = (
   state: any,
-  node: Heading | Paragraph,
+  node: (Heading | Paragraph) & { marker?: string },
   segment: any,
   tagName: string
 ): any => {
@@ -16,7 +16,6 @@ export const segmentParentNodeToHast = (
     children: state.all(node),
   };
   if("marker" in node) {
-    //@ts-ignore
     resultHast.properties.marker = node.marker
   }
   return resultHast;

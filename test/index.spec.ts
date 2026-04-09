@@ -49,6 +49,10 @@ function processWithoutThrowing(filename: string) {
   assert.ok(output.length > 0);
 }
 
+function parseAndStringify(input: string): string {
+  return processor.stringify(processor.parse(input));
+}
+
 describe("MdProcessorTest", function () {
   const files = [
     "book-content.md",
@@ -99,5 +103,15 @@ describe("MdProcessorTest", function () {
     it(`should parse and stringify ${filename} without throwing`, function () {
       processWithoutThrowing(filename);
     });
+  });
+
+  it("should not leak tag attributes between adjacent markers", function () {
+    const output = parseAndStringify(
+      '<a href="https://example.com">link</a><strong>bold</strong>',
+    );
+
+    assert.match(output, /<a href="https:\/\/example\.com">link<\/a>/);
+    assert.match(output, /<strong>bold<\/strong>/);
+    assert.ok(!/<strong[^>]*href=/.test(output));
   });
 });

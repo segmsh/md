@@ -1,5 +1,3 @@
-// @ts-ignore
-import structuredClone from '@ungap/structured-clone'
 import { visit } from 'unist-util-visit'
 import { createState } from './state.js'
 
@@ -24,7 +22,6 @@ export function toMdast(tree: any, options: any) {
     }
   })
 
-  // @ts-ignore
   const result = state.one(cleanTree, undefined)
 
   if (!result) {

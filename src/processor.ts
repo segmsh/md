@@ -17,20 +17,14 @@ import {
   Document,
   Processor,
   Segment,
-  Tag,
   Value,
   root,
-  element,
-  segment,
-  id,
 } from "@segmsh/core";
 
-import { SegmentsMap } from "./types";
 import { Root as MdastRoot } from "mdast";
 import type { Info, State } from "mdast-util-to-markdown";
 import { removePosition } from "unist-util-remove-position";
 import img from "./handlers/hast-to-mdast/img.js";
-import rehypeParse from "rehype-parse";
 import {
   divHastToMdast,
   headerHastToMdast,
@@ -48,8 +42,7 @@ import {
   breakHandler,
   segmentParentNodeToHast,
 } from "./handlers/mdast-to-hast/handlers.js";
-import { hastToString } from "./utils/hast.js";
-import { toHtmlSafe } from "./utils/toHtmlSafe.js";
+import { toHtmlSafe } from "./utils/to-html-safe.js";
 import {
   AVOID_HTML_TAGS,
   AVOID_HTML_TYPE,
@@ -58,314 +51,12 @@ import {
 } from "./utils/html.js";
 import { Parent } from "mdast";
 import YamlProcessor from "@segmsh/yaml";
-import { deleteFields as deletePositionFields } from "./utils/deleteFields.js";
-
-type LayoutElement = Element;
-type LayoutRoot = HastRoot;
-
-const allowedTagsRegex: RegExp = /^\/?[a-zA-Z]+\d+$/;
-
-const convertMdastTagToHast = (node: any) => {
-  const tag = node.type;
-  const tagsMap: Record<string, string> = {
-    link: "a",
-    inlineCode: "code",
-    emphasis: "em",
-    image: "img",
-    linkReference: "a",
-    mdxJsxTextElement: node.name,
-    delete: "del",
-    break: "br",
-  };
-
-  return tagsMap[tag] ? tagsMap[tag] : tag;
-};
-
-const convertMdastTagsToHast = (tags: any) => {
-  let newTags: Record<string, Tag> = {};
-  const tagsMapLinks: Record<string, string> = {
-    url: "href",
-  };
-  const tagsMapImg: Record<string, string> = {
-    url: "src",
-  };
-
-  for (const key in tags) {
-    if (tags.hasOwnProperty(key)) {
-      const innerObject = tags[key];
-      const transformedInnerObject: Tag = {};
-      const tagsMap = key.includes("img") ? tagsMapImg : tagsMapLinks;
-
-      for (const innerKey in innerObject) {
-        if (innerObject.hasOwnProperty(innerKey)) {
-          let tagAttributeValue = innerObject[innerKey];
-
-          const tagAttributeValueIsObject: boolean =
-            typeof tagAttributeValue === "object";
-          if (tagAttributeValueIsObject) {
-            deletePositionFields(tagAttributeValue);
-            tagAttributeValue = JSON.stringify(tagAttributeValue);
-          }
-          if (tagsMap.hasOwnProperty(innerKey)) {
-            transformedInnerObject[tagsMap[innerKey]] = tagAttributeValue;
-          } else {
-            transformedInnerObject[innerKey] = tagAttributeValue;
-          }
-        }
-      }
-
-      newTags[key] = transformedInnerObject;
-    }
-  }
-
-  return newTags;
-};
-
-function parseHTMLTags(html: string) {
-  if (!html || html.length < 2) return { tagName: "", htmlAttributes: {} };
-  const isUpperCaseCapitalLetter = html[1] === html[1].toUpperCase();
-
-  const tree = unified()
-    .use(rehypeParse, { fragment: true })
-    .parse(html);
-
-  let tagName = "";
-  let htmlAttributes = {};
-
-  tree.children.forEach((node: any) => {
-    if (node.type === "element") {
-      tagName = node.tagName;
-      if (isUpperCaseCapitalLetter) {
-        tagName = tagName.charAt(0).toUpperCase() + tagName.slice(1);
-      }
-
-      const attributes: any = {};
-      for (const [key, value] of Object.entries(node.properties || {})) {
-        if (key === "className" && Array.isArray(value)) {
-          attributes["class"] = value.join(" ");
-        } else if (key === "htmlFor") {
-          attributes["for"] = value;
-        } else if (value === true) {
-          attributes[key] = "";
-        } else {
-          attributes[key] = String(value);
-        }
-      }
-      htmlAttributes = attributes;
-    }
-  });
-
-  return { tagName, htmlAttributes };
-}
-
-function convertMdastNodeToText(node: any, mdast?: any) {
-  let resultNodeText = "";
-  let tagCount = 0;
-  let tags: Record<string, Tag> = {};
-  const htmlTags: number[] = [];
-
-  const nodeToString = (node: any): string => {
-    if (node.type === "linkReference" && mdast) {
-      visitParents(
-        mdast,
-        (mdastChild) =>
-          mdastChild.type === "definition" &&
-          "identifier" in mdastChild &&
-          mdastChild.identifier === node.identifier,
-        (definition: any, _) => {
-          node.url = definition.url;
-        },
-      );
-    }
-
-    const tag = convertMdastTagToHast(node);
-    let tagNameWithIndex = "";
-
-    if (node.type === "html") {
-      let value = "";
-      const { tagName, htmlAttributes } = parseHTMLTags(node.value);
-      const openingTag = /^<(\w+)>$/;
-      const closingTag = /^<\/\w+>$/;
-      let tagCountTemp = tagCount;
-
-      if (closingTag.test(node.value)) {
-        tagCountTemp = htmlTags.pop()!;
-        const tagName = node.value.replace(/[<>]/g, "");
-        value = `{${tagName}${tagCountTemp}}`;
-      }
-
-      if (tagName) {
-        value = `{${tagName}${tagCountTemp}}`;
-        tags[tagName + tagCountTemp] = { ...htmlAttributes };
-        if (node.marker) tags[tagName + tagCountTemp].marker = node.marker;
-        htmlTags.push(tagCount);
-        tagCount++;
-      }
-
-      return value;
-    }
-
-    if (node.type === "footnoteReference") {
-      return `[^${node.label}]`;
-    }
-
-    if ("children" in node) {
-      const tagCountTemp = tagCount;
-
-      tagNameWithIndex = tag + tagCountTemp;
-      setTags(node, tagNameWithIndex);
-      tagCount++;
-
-      const content = node.children.map(nodeToString).join("");
-
-      return `{${tag}${tagCountTemp}}${content}{/${tag}${tagCountTemp}}`;
-    } else if ("value" in node || node.type === "image") {
-      if (tag !== "text") {
-        let value: string;
-        tagNameWithIndex = tag + tagCount;
-
-        setTags(node, tagNameWithIndex);
-
-        if (node.type === "image") {
-          value = `{${tag}${tagCount}}`;
-        } else {
-          value = `{${tag}${tagCount}}${node.value || ""}{/${tag}${tagCount}}`;
-        }
-
-        tagCount++;
-
-        return value;
-      } else {
-        return node.value;
-      }
-    } else if (node.type === "break") {
-      setTags(node, `br${tagCount}`);
-      return `{br${tagCount}}`;
-    } else {
-      return "";
-    }
-  };
-
-  const setTags = (child: any, tag: string): void => {
-    const tagTypeList = ["url", "title", "alt", "marker", "identifier", "data"];
-    const attr: any = {};
-
-    tagTypeList.forEach((tagType) => {
-      if (child[tagType]) {
-        attr[tagType] = child[tagType];
-      }
-    });
-
-    if (Object.keys(attr).length > 0) {
-      tags[tag] = { ...tags[tag], ...attr };
-    }
-  };
-
-  resultNodeText = node.children.map(nodeToString).join("");
-
-  if (resultNodeText) {
-    return {
-      type: "text",
-      value: resultNodeText,
-      tags:
-        Object.keys(tags).length > 0
-          ? {
-              tags: JSON.stringify(tags, (key, value) =>
-                typeof value === "bigint" ? value.toString() : value,
-              ),
-            }
-          : {},
-    };
-  }
-
-  return null;
-}
-
-function parseStringToStructure(segment: Segment): Element[] {
-  const text: string = segment.text;
-  const stack = [];
-  let currentText: string = "";
-  let properties: any = {};
-
-  for (let i = 0; i < text.length; i++) {
-    if (
-      text[i] === "{" &&
-      allowedTagsRegex.test(text.substring(i + 1, text.indexOf("}", i + 1)))
-    ) {
-      if (currentText !== "") {
-        stack.push({
-          type: "text",
-          value: currentText,
-        });
-        currentText = "";
-      }
-
-      const closingIndex: number = text.indexOf("}", i + 1);
-      const tagWithIndex: string = text.substring(i + 1, closingIndex);
-
-      const headingTagRegExp: RegExp = /^(\/)?h(\d)*$/;
-      const tag: string = headingTagRegExp.test(tagWithIndex)
-        ? tagWithIndex.replace(/\d(?!.*\d)/, "")
-        : tagWithIndex.replace(/\d/g, "");
-
-      if (tag.startsWith("/")) {
-        const closingTag: string = tag.substring(1);
-        const elements = [];
-
-        while (stack.length > 0) {
-          const element: any = stack.pop();
-          if (element.type === "element" && element.tagName === closingTag) {
-            element.children = elements;
-            stack.push(element);
-            break;
-          }
-          elements.unshift(element);
-        }
-      } else {
-        if (segment.tags) {
-          const tag: Tag = segment.tags[tagWithIndex];
-          for (const tagAttrKey in tag) {
-            const tagAttr = tag[tagAttrKey];
-            const isStringifiedObject: boolean =
-              (typeof tagAttr === "string" &&
-                tagAttr?.charAt(0) === "{" &&
-                tagAttr?.charAt(tagAttr.length - 1) === "}") ||
-              (typeof tagAttr === "string" &&
-                tagAttr?.charAt(0) === "[" &&
-                tagAttr?.charAt(tagAttr.length - 1) === "]");
-
-            if (isStringifiedObject) {
-              tag[tagAttrKey] = JSON.parse(tagAttr);
-            }
-          }
-          properties = segment.tags[tagWithIndex];
-        }
-
-        const element = {
-          type: "element",
-          tagName: tag,
-          properties: properties || {},
-          children: [],
-        };
-
-        stack.push(element);
-      }
-
-      i = closingIndex;
-    } else {
-      currentText += text[i];
-    }
-  }
-
-  if (currentText !== "") {
-    stack.push({
-      type: "text",
-      value: currentText,
-    });
-  }
-
-  return stack;
-}
+import { convertMdastNodeToText } from "./utils/tag-markers.js";
+import {
+  getChildrenContentLength,
+  hastToSegments,
+  segmentsToHast,
+} from "./utils/hast-segments.js";
 
 const keepMarkerPlugin = (option: { doc: string }) => {
   const { doc } = option;
@@ -481,13 +172,6 @@ const postProcessHtmlMarker = (option: { doc: string }) => {
     );
   };
   return transformer;
-};
-
-const getChildrenContentLength = (node: LayoutElement): number => {
-  return node.children.reduce((acc: number, child: any) => {
-    if (child.type === "element" || child?.value?.trim()) acc += 1;
-    return acc;
-  }, 0);
 };
 
 const prepareMdast = (option: {
@@ -861,6 +545,21 @@ class MdProcessor implements Processor {
       .stringify(mdast) as string;
   }
 
+  private stringifyYamlNode(node: any, data: Document): string {
+    const segmentIds = new Set<string>();
+
+    visitParents(node, { type: "segment" }, (segmentNode: any) => {
+      segmentIds.add(segmentNode.id);
+    });
+
+    const yamlDoc: Document = {
+      tree: root([structuredClone(node)]),
+      segments: data.segments.filter((segment) => segmentIds.has(segment.id)),
+    };
+
+    return this.yamlProcessor.stringify(yamlDoc);
+  }
+
   public parse(doc: string): Document {
     const { docWithHtmlPlaceholders, contentsAvoidMarkdown } =
       replaceHtmlBeforeMdast(doc);
@@ -1013,7 +712,7 @@ class MdProcessor implements Processor {
       .use(postProcessHtmlMarker, { doc: docWithHtmlPlaceholders })
       .runSync(mdast) as HastRoot;
 
-    const { tree, segments } = this.hastToSegments(hast);
+    const { tree, segments } = hastToSegments(hast, this.yamlProcessor);
 
     removePosition(tree);
 
@@ -1028,7 +727,7 @@ class MdProcessor implements Processor {
   }
 
   public stringify(data: Document): string {
-    const hast = this.segmentsToHast(data);
+    const hast = segmentsToHast(data);
 
     const mdast: MdastRoot = unified()
       .use(footNotePlugin)
@@ -1123,7 +822,7 @@ class MdProcessor implements Processor {
             return htmlLevel;
           },
           yaml: (h: any, node: any) => {
-            const yamlStr = this.yamlProcessor.stringify(data);
+            const yamlStr = this.stringifyYamlNode(node, data);
 
             return {
               type: "paragraph",
@@ -1215,230 +914,6 @@ class MdProcessor implements Processor {
     return result;
   }
 
-  protected getElementFromConvertHastToSegment(
-    node: LayoutElement,
-    isNodeList: boolean,
-    convertNode: any,
-  ): any {
-    if (node.type === "element") {
-      const children: LayoutElement[] = node.children.map((child: any) => {
-        if (node.properties?.marker === "html" && isNodeList) {
-          "properties" in child && (child.properties.marker = "html");
-        }
-
-        return convertNode(child);
-      });
-
-      return {
-        ...node,
-        children: children,
-      };
-    }
-
-    return null;
-  }
-
-  private hastToSegments(tree: HastRoot): Document {
-    let segments: Segment[] = [];
-    const layout: LayoutRoot = root([]);
-
-    const addSegment = (node: any): string => {
-      const tags = node.tags;
-      const idValue: string = id({
-        text: node.value || "",
-        ...(tags && { tags }),
-      });
-      const segment: Segment = {
-        id: idValue,
-        text: node.value || "",
-        ...(tags && { tags }),
-      };
-
-      segments.push(segment);
-
-      return segment.id;
-    };
-
-    const checkIsList = (node: LayoutElement): boolean => {
-      return (
-        "tagName" in node &&
-        (node.tagName === ListTypes.ul || node.tagName === ListTypes.ol)
-      );
-    };
-
-    const convertNode = (node: any) => {
-      if (node.type === "text") {
-        if (node.value?.trim() === "") {
-          return node;
-        } else {
-          return segment(addSegment(node));
-        }
-      }
-
-      const isHtmlNode: boolean =
-        node.type === "element" && node.properties?.marker === "html";
-      if (isHtmlNode && "tagName" in node) {
-        if (node.tagName === "li") {
-          const listChild: LayoutElement | undefined =
-            node.children.find(checkIsList);
-
-          if (listChild) {
-            const childrenLength: number = node.children.length - 1;
-
-            node.children = node.children.filter(
-              (child: LayoutElement, index: number) => {
-                if (!checkIsList(child) && index !== childrenLength) {
-                  return child;
-                }
-              },
-            );
-          }
-
-          const { text, tags } = hastToString(node);
-
-          const resultNode: LayoutElement = {
-            ...node,
-            children: [
-              element("p", {},
-                segment(addSegment({ ...node, value: text, tags })),
-              ),
-            ],
-          };
-
-          if (listChild) {
-            "properties" in listChild && (listChild.properties.marker = "html");
-
-            resultNode.children.push(convertNode(listChild));
-          }
-
-          return resultNode;
-        }
-
-        if (node.tagName === "a" || node.tagName === "img") {
-          const { text, tags } = hastToString(node, {
-            rootContext: { index: 0 },
-          });
-
-          return element("p", {},
-            segment(addSegment({ ...node, value: text, tags })),
-          );
-        }
-      }
-
-      const isNodeList: boolean = checkIsList(node);
-
-      const nodeElement = this.getElementFromConvertHastToSegment(
-        node,
-        isNodeList,
-        convertNode,
-      );
-
-      if (nodeElement) return nodeElement;
-
-      if (
-        node.type === "comment" ||
-        node.type === "definition" ||
-        node.type === AVOID_HTML_TYPE
-      )
-        return node;
-
-      if (node.type === "yaml" && node.value) {
-        const yamlDoc = this.yamlProcessor.parse(node.value);
-
-        segments = segments.concat(yamlDoc.segments);
-
-        return yamlDoc.tree.children[0];
-      }
-
-      throw new Error(`Unsupported node type: ${node.type}`);
-    };
-
-    tree.children.forEach((child: any) => {
-      visitParents(child, { type: "element" }, (node: any) => {
-        if (node.properties?.tags) {
-          node.children[0].tags = convertMdastTagsToHast(
-            JSON.parse(node.properties.tags),
-          );
-
-          delete node.properties.tags;
-        }
-
-        const childrenContentLength: number = getChildrenContentLength(node);
-
-        const hasNodeImgOrLink: boolean =
-          node.children.findIndex(
-            (child: LayoutElement): boolean =>
-              "tagName" in child &&
-              (child?.tagName === "a" || child?.tagName === "img"),
-          ) >= 0;
-
-        if (
-          node.tagName === "td" ||
-          node.tagName === "th" ||
-          hasNodeImgOrLink
-        ) {
-          if (
-            (childrenContentLength > 1 &&
-              node.children.some((el: any) => el.type === "element")) ||
-            hasNodeImgOrLink
-          ) {
-            const { text, tags } = hastToString(node);
-
-            if (text) {
-              node.children = [{ type: "text", value: text, tags }];
-            }
-          }
-        }
-
-        if (
-          (node.tagName === "img" || node.tagName === "a") &&
-          node.children.length === 0
-        ) {
-          const tagName: string = `${node.tagName}0`;
-
-          node.children.push({
-            type: "text",
-            value: `{${tagName}}`,
-            tags: { [tagName]: node.properties },
-          });
-        }
-      });
-
-      layout.children.push(convertNode(child));
-    });
-
-    return { tree: layout, segments };
-  }
-
-  segmentsToHast(data: Document): any {
-    const segmentsMap: SegmentsMap = {};
-
-    data.segments.forEach((segment: Segment): void => {
-      segmentsMap[segment.id] = segment;
-    });
-
-    visitParents(data.tree, { type: "segment" }, (node: any, parent) => {
-      const structure: Element[] = parseStringToStructure(segmentsMap[node.id]);
-      let parentTemp = parent[parent.length - 1];
-      const indexElement = parentTemp.children.findIndex(
-        (child: any): boolean => child.id === node.id,
-      );
-
-      if (parentTemp.children.length === 1) {
-        if (parentTemp.tagName === "img") {
-          parentTemp.children = structure[0].children;
-          parentTemp.properties = structure[0].properties || {};
-        } else {
-          parentTemp.children = structure;
-        }
-      } else {
-        parentTemp.children[indexElement] =
-          structure.length > 1 ? structure : structure[0];
-      }
-    });
-
-    return data.tree;
-  }
 }
 
 export default MdProcessor;

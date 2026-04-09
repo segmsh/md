@@ -1,13 +1,10 @@
-// @ts-ignore
-import structuredClone from '@ungap/structured-clone'
-// @ts-ignore
 import {phrasing as hastPhrasing} from 'hast-util-phrasing'
-// @ts-ignore
 import {whitespace} from 'hast-util-whitespace'
-// @ts-ignore
 import {phrasing as mdastPhrasing} from 'mdast-util-phrasing'
 import {dropSurroundingBreaks} from './drop-surrounding-breaks.js'
 import { BlockContent, Delete, Link, Nodes, Paragraph, PhrasingContent, RootContent } from 'mdast';
+
+type ParentWithChildren = { children: any[] }
 
 export function wrapNeeded(nodes: Nodes[]): boolean {
   let index = -1
@@ -41,22 +38,17 @@ function split(node: Delete | Link): BlockContent[] {
   return runs(node.children, onphrasing, onnonphrasing)
 
   function onphrasing(nodes: PhrasingContent[]): BlockContent[] {
-    const newParent = cloneWithoutChildren(node)
-    // @ts-ignore
-    newParent.children = nodes
-    // @ts-ignore
-    return [newParent]
+    const newParent = cloneWithoutChildren(node) as Delete | Link
+    ;(newParent as ParentWithChildren).children = nodes
+    return [newParent as unknown as BlockContent]
   }
 
   function onnonphrasing(child: BlockContent): BlockContent {
     if ('children' in child && 'children' in node) {
-      const newParent = cloneWithoutChildren(node)
-      // @ts-ignore
-      const newChild = cloneWithoutChildren(child)
-      // @ts-ignore
-      newParent.children = child.children
-      // @ts-ignore
-      newChild.children.push(newParent)
+      const newParent = cloneWithoutChildren(node) as Delete | Link
+      const newChild = cloneWithoutChildren(child) as BlockContent & ParentWithChildren
+      ;(newParent as ParentWithChildren).children = (child as ParentWithChildren).children
+      newChild.children.push(newParent as unknown as BlockContent)
       return newChild as BlockContent
     }
 
@@ -85,7 +77,6 @@ function runs(
         queue = []
       }
 
-      // @ts-ignore
       result.push(onnonphrasing(node as BlockContent))
     }
   }

@@ -21,9 +21,7 @@ export default function img(node: any, parent: any): any {
     let html = `<${node.tagName}`;
 
     if (node.properties) {
-      Object.keys(node.properties).forEach((key) => {
-        //@ts-ignore
-        const value = node.properties[key];
+      Object.entries(node.properties as Record<string, unknown>).forEach(([key, value]) => {
         html += ` ${key}="${value}"`;
       });
     }
