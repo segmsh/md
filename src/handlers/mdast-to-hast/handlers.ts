@@ -5,7 +5,7 @@ type MdastToHastState = {
   all(node: Heading | Paragraph): ElementContent[];
 };
 
-type TaggedSegment = {
+type SerializedTextPayload = {
   tags?: Properties;
 };
 
@@ -18,15 +18,15 @@ type MarkerNode = {
 export const segmentParentNodeToHast = (
   state: MdastToHastState,
   node: (Heading | Paragraph) & { marker?: string },
-  segment: TaggedSegment | null,
+  serializedText: SerializedTextPayload | null,
   tagName: string
 ): Element => {
-  node.children = segment ? [segment as never] : [];
+  node.children = serializedText ? [serializedText as never] : [];
 
   const resultHast: Element = {
     type: "element",
     tagName: tagName,
-    properties: segment?.tags || {},
+    properties: serializedText?.tags || {},
     children: state.all(node),
   };
   if("marker" in node) {

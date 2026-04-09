@@ -12,6 +12,7 @@ import {
   ElementContent,
   Root as HastRoot,
   Text as HastText,
+  Properties as HastProperties,
 } from "hast";
 import {
   Document,
@@ -21,7 +22,17 @@ import {
   root,
 } from "@segmsh/core";
 
-import { Root as MdastRoot } from "mdast";
+import {
+  Code,
+  Definition,
+  Heading,
+  Link,
+  List,
+  Paragraph,
+  Root as MdastRoot,
+  Strong,
+  Table,
+} from "mdast";
 import type { Info, State } from "mdast-util-to-markdown";
 import { removePosition } from "unist-util-remove-position";
 import img from "./handlers/hast-to-mdast/img.js";
@@ -51,7 +62,9 @@ import {
 } from "./utils/html.js";
 import { Parent } from "mdast";
 import YamlProcessor from "@segmsh/yaml";
-import { serializeMdastNodeToTaggedText } from "./utils/tag-markers.js";
+import {
+  serializeMdastNodeToTaggedText,
+} from "./utils/tag-markers.js";
 import {
   getChildrenContentLength,
   hastToSegments,
@@ -315,7 +328,7 @@ class MdProcessor implements Processor {
   private mdastToHastHandlers: Record<string, Function> = {};
   private hastToMdastHandlers: Record<string, Function> = {};
   private passThroughTypes: string[] = ["yaml", "definition", avoidHtmlType];
-  protected mdast: any = {};
+  protected mdast: MdastRoot = { type: "root", children: [] };
 
   constructor() {
     this.yamlProcessor = new YamlProcessor();
@@ -325,8 +338,8 @@ class MdProcessor implements Processor {
     let listBulletLastUsed: string[] = [];
 
     return {
-      text: (node: any) => node.value,
-      code: (node: any, _: Parent | undefined, state: State, info: Info) => {
+      text: (node: { value: string }) => node.value,
+      code: (node: Code & { marker?: string }, _: Parent | undefined, state: State, info: Info) => {
         const marker = node.marker?.trim() ? node.marker.repeat(3) : "";
 
         const codeIndented: any = {
@@ -386,7 +399,7 @@ class MdProcessor implements Processor {
         exit();
         return value;
       },
-      link: (node: any, _: Parent | undefined, state: State, info: Info) => {
+      link: (node: Link, _: Parent | undefined, state: State, info: Info) => {
         const exit = state.enter("link");
         const tracker = state.createTracker(info);
         let value = tracker.move("[");
@@ -423,7 +436,12 @@ class MdProcessor implements Processor {
         exit();
         return value;
       },
-      strong: (node: any, _: Parent | undefined, state: State, info: Info) => {
+      strong: (
+        node: Strong & { properties?: { marker?: string } },
+        _: Parent | undefined,
+        state: State,
+        info: Info,
+      ) => {
         let marker = node.properties?.marker || "<strong>";
 
         const exit = state.enter("strong");
@@ -442,8 +460,13 @@ class MdProcessor implements Processor {
         exit();
         return value;
       },
-      list: (node: any, _: Parent | undefined, state: State, info: Info) => {
-        const marker = node.properties?.marker || node.marker;
+      list: (
+        node: List & { marker?: string; properties?: { marker?: string } },
+        _: Parent | undefined,
+        state: State,
+        info: Info,
+      ) => {
+        const marker = node.properties?.marker || node.marker || "-";
         const exit = state.enter("list");
         const tracker = state.createTracker(info);
 
@@ -462,8 +485,8 @@ class MdProcessor implements Processor {
         exit();
         return value;
       },
-      thematicBreak: (node: any) => mdastToMdBreakHandler(node),
-      break: (node: any) => mdastToMdBreakHandler(node),
+      thematicBreak: (node: { marker?: string }) => mdastToMdBreakHandler(node),
+      break: (node: { marker?: string }) => mdastToMdBreakHandler(node),
       blockquote: (
         node: any,
         _: Parent | undefined,
@@ -487,15 +510,19 @@ class MdProcessor implements Processor {
         exit();
         return value;
       },
-      heading: (node: any, _: Parent | undefined, state: State, info: Info) =>
+      heading: (node: Heading, _: Parent | undefined, state: State, info: Info) =>
         headingMdastToMd(node, state, info),
     };
   }
 
-  protected mdParagraphHandler(state: any, node: any, mdast: MdastRoot) {
-    const segment: any = serializeMdastNodeToTaggedText(node, mdast);
+  protected mdParagraphHandler(
+    state: { all(node: Paragraph | Heading): ElementContent[] },
+    node: (Paragraph | Heading) & { depth?: number; marker?: string },
+    mdast: MdastRoot,
+  ) {
+    const serializedText = serializeMdastNodeToTaggedText(node as any, mdast);
     const tagName: string = node.depth ? "h" + node.depth : "p";
-    return segmentParentNodeToHast(state, node, segment, tagName);
+    return segmentParentNodeToHast(state, node, serializedText, tagName);
   }
 
   protected addMdastToHastHandler(
@@ -545,7 +572,7 @@ class MdProcessor implements Processor {
       .stringify(mdast) as string;
   }
 
-  private stringifyYamlNode(node: any, data: Document): string {
+  private stringifyYamlNode(node: Element, data: Document): string {
     const segmentIds = new Set<string>();
 
     visitParents(node, { type: "segment" }, (segmentNode: any) => {
@@ -582,11 +609,11 @@ class MdProcessor implements Processor {
             return this.mdParagraphHandler(state, node, mdast);
           },
           code: (state, node) => {
-            const properties: any = {};
+            const properties: HastProperties = {};
             if (node.lang) properties.lang = node.lang;
             if (node.meta) properties.meta = node.meta;
 
-            let codeElement: any = {
+            const codeElement: Element = {
               properties,
               type: "element",
               tagName: "code",
@@ -614,16 +641,16 @@ class MdProcessor implements Processor {
               : false;
 
             visitParents(node, { type: "tableCell" }, (child) => {
-              const segment: any = serializeMdastNodeToTaggedText(child);
+              const serializedText: any = serializeMdastNodeToTaggedText(child);
               let cell: any;
 
-              if (segment !== null && segment.type !== "text") {
-                cell = state.one(segment, parent);
-                cell.children[0].properties.marker = segment.children[0].marker;
+              if (serializedText !== null && serializedText.type !== "text") {
+                cell = state.one(serializedText, parent);
+                cell.children[0].properties.marker = serializedText.children[0].marker;
               } else {
                 cell = state.one(child, parent);
-                cell.properties = segment?.tags || {};
-                cell.children = segment ? [segment] : [];
+                cell.properties = serializedText?.tags || {};
+                cell.children = serializedText ? [serializedText] : [];
               }
               if (isTableHeadOnGfmTable) cell.tagName = "th";
               cells.push(cell);
@@ -679,7 +706,7 @@ class MdProcessor implements Processor {
             };
           },
           list: (state, node) => {
-            const properties: any = {
+            const properties: HastProperties = {
               spread: node.spread.toString(),
               start: node.start,
             };
@@ -693,7 +720,9 @@ class MdProcessor implements Processor {
             };
           },
           table: (state, node) => {
-            const properties: any = { align: JSON.stringify(node.align) };
+            const properties: HastProperties = {
+              align: JSON.stringify(node.align),
+            };
             if (node.marker) properties.marker = node.marker;
             return {
               type: "element",

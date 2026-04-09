@@ -1,13 +1,34 @@
 import { visitParents } from "unist-util-visit-parents";
 import { unified } from "unified";
 import rehypeParse from "rehype-parse";
-import type { Element } from "hast";
+import type { Element, Root } from "hast";
+import type { Root as MdastRoot } from "mdast";
 import type { Segment, Tag } from "@segmsh/core";
 import { deleteFields as deletePositionFields } from "./delete-fields.js";
 
 const allowedTagsRegex: RegExp = /^\/?[a-zA-Z]+\d+$/;
 
-const convertMdastTagToHast = (node: any): string => {
+type MdastNodeLike = {
+  alt?: string;
+  children?: MdastNodeLike[];
+  data?: unknown;
+  identifier?: string;
+  label?: string;
+  marker?: string;
+  name?: string;
+  title?: string;
+  type: string;
+  url?: string;
+  value?: string;
+  [key: string]: unknown;
+};
+
+type HTreeTextNode = {
+  type: "text";
+  value: string;
+};
+
+const convertMdastTagToHast = (node: MdastNodeLike): string => {
   const tag = node.type;
   const tagsMap: Record<string, string> = {
     link: "a",
@@ -15,7 +36,7 @@ const convertMdastTagToHast = (node: any): string => {
     emphasis: "em",
     image: "img",
     linkReference: "a",
-    mdxJsxTextElement: node.name,
+    mdxJsxTextElement: node.name || "mdxJsxTextElement",
     delete: "del",
     break: "br",
   };
@@ -69,12 +90,12 @@ function extractHtmlTagInfo(html: string): {
 
   const tree = unified()
     .use(rehypeParse, { fragment: true })
-    .parse(html) as any;
+    .parse(html) as Root;
 
   let tagName = "";
   let htmlAttributes: Record<string, string> = {};
 
-  tree.children.forEach((node: any) => {
+  tree.children.forEach((node) => {
     if (node.type === "element") {
       tagName = node.tagName;
       if (isUpperCaseCapitalLetter) {
@@ -100,22 +121,27 @@ function extractHtmlTagInfo(html: string): {
   return { tagName, htmlAttributes };
 }
 
-export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
+export function serializeMdastNodeToTaggedText(
+  node: MdastNodeLike,
+  mdast?: MdastRoot,
+) {
   let resultNodeText = "";
   let tagCount = 0;
   let collectedTags: Record<string, Tag> = {};
   const htmlTags: number[] = [];
 
-  const nodeToString = (childNode: any): string => {
+  const nodeToString = (childNode: MdastNodeLike): string => {
     if (childNode.type === "linkReference" && mdast) {
       visitParents(
         mdast,
-        (mdastChild: any) =>
+        (mdastChild) =>
           mdastChild.type === "definition" &&
           "identifier" in mdastChild &&
           mdastChild.identifier === childNode.identifier,
-        (definition: any) => {
-          childNode.url = definition.url;
+        (definition) => {
+          if ("url" in definition && typeof definition.url === "string") {
+            childNode.url = definition.url;
+          }
         },
       );
     }
@@ -125,13 +151,13 @@ export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
 
     if (childNode.type === "html") {
       let value = "";
-      const { tagName, htmlAttributes } = extractHtmlTagInfo(childNode.value);
+      const { tagName, htmlAttributes } = extractHtmlTagInfo(childNode.value || "");
       const closingTag = /^<\/\w+>$/;
       let tagCountTemp = tagCount;
 
-      if (closingTag.test(childNode.value)) {
+      if (closingTag.test(childNode.value || "")) {
         tagCountTemp = htmlTags.pop()!;
-        const closingTagName = childNode.value.replace(/[<>]/g, "");
+        const closingTagName = (childNode.value || "").replace(/[<>]/g, "");
         value = `{${closingTagName}${tagCountTemp}}`;
       }
 
@@ -157,7 +183,7 @@ export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
       tagNameWithIndex = tag + tagCountTemp;
       setTags(childNode, tagNameWithIndex);
       tagCount++;
-      const content = childNode.children.map(nodeToString).join("");
+      const content = (childNode.children || []).map(nodeToString).join("");
       return `{${tag}${tagCountTemp}}${content}{/${tag}${tagCountTemp}}`;
     }
 
@@ -177,7 +203,7 @@ export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
         return value;
       }
 
-      return childNode.value;
+      return childNode.value || "";
     }
 
     if (childNode.type === "break") {
@@ -188,7 +214,7 @@ export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
     return "";
   };
 
-  const setTags = (childNode: any, tag: string): void => {
+  const setTags = (childNode: MdastNodeLike, tag: string): void => {
     const tagTypeList = ["url", "title", "alt", "marker", "identifier", "data"];
     const tagAttributes: Record<string, unknown> = {};
 
@@ -206,7 +232,7 @@ export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
     }
   };
 
-  resultNodeText = node.children.map(nodeToString).join("");
+  resultNodeText = (node.children || []).map(nodeToString).join("");
 
   if (!resultNodeText) return null;
 
@@ -226,7 +252,7 @@ export function serializeMdastNodeToTaggedText(node: any, mdast?: any) {
 
 export function parseTaggedTextToElements(segment: Segment): Element[] {
   const text: string = segment.text;
-  const stack: any[] = [];
+  const stack: Array<Element | HTreeTextNode> = [];
   let currentText = "";
 
   const isSerializedObject = (value: unknown): value is string =>
@@ -270,12 +296,13 @@ export function parseTaggedTextToElements(segment: Segment): Element[] {
 
       if (tag.startsWith("/")) {
         const closingTag: string = tag.substring(1);
-        const childNodes: any[] = [];
+        const childNodes: Array<Element | HTreeTextNode> = [];
 
         while (stack.length > 0) {
           const element = stack.pop();
+          if (!element) break;
           if (element.type === "element" && element.tagName === closingTag) {
-            element.children = childNodes;
+            element.children = childNodes as Element["children"];
             stack.push(element);
             break;
           }
@@ -285,7 +312,7 @@ export function parseTaggedTextToElements(segment: Segment): Element[] {
         stack.push({
           type: "element",
           tagName: tag,
-          properties: getTagProperties(tagWithIndex),
+          properties: getTagProperties(tagWithIndex) as Element["properties"],
           children: [],
         });
       }
@@ -300,5 +327,5 @@ export function parseTaggedTextToElements(segment: Segment): Element[] {
     stack.push({ type: "text", value: currentText });
   }
 
-  return stack;
+  return stack as Element[];
 }

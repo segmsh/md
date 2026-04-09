@@ -1,5 +1,5 @@
 import { visitParents } from "unist-util-visit-parents";
-import type { Element, Root } from "hast";
+import type { Element, ElementContent, Root } from "hast";
 import { Document, Segment, element, id, root, segment } from "@segmsh/core";
 import YamlProcessor from "@segmsh/yaml";
 import { SegmentsMap } from "../types.js";
@@ -12,8 +12,13 @@ import {
 } from "./tag-markers.js";
 
 export const getChildrenContentLength = (node: Element): number => {
-  return node.children.reduce((acc: number, child: any) => {
-    if (child.type === "element" || child?.value?.trim()) acc += 1;
+  return node.children.reduce((acc: number, child: ElementContent) => {
+    if (
+      child.type === "element" ||
+      ("value" in child && typeof child.value === "string" && child.value.trim())
+    ) {
+      acc += 1;
+    }
     return acc;
   }, 0);
 };
@@ -28,7 +33,7 @@ const getElementFromConvertedNode = (
   if (node.type !== "element") return null;
 
   const isNodeList = isListNode(node);
-  const children: Element[] = node.children.map((child: any) => {
+  const children: Element[] = node.children.map((child: ElementContent) => {
     if (node.properties?.marker === "html" && isNodeList) {
       "properties" in child && (child.properties.marker = "html");
     }
@@ -136,7 +141,7 @@ export function hastToSegments(
     throw new Error(`Unsupported node type: ${node.type}`);
   };
 
-  tree.children.forEach((child: any) => {
+  tree.children.forEach((child) => {
     visitParents(child, { type: "element" }, (node: any) => {
       if (node.properties?.tags) {
         node.children[0].tags = mapMdastTagAttributesToHast(
@@ -160,7 +165,7 @@ export function hastToSegments(
       ) {
         if (
           (childrenContentLength > 1 &&
-            node.children.some((el: any) => el.type === "element")) ||
+            node.children.some((el: ElementContent) => el.type === "element")) ||
           hasNodeImgOrLink
         ) {
           const { text, tags } = hastToString(node);
@@ -201,7 +206,7 @@ export function segmentsToHast(data: Document): Root {
     const structure: Element[] = parseTaggedTextToElements(segmentsMap[node.id]);
     const parentNode = parent[parent.length - 1];
     const indexElement = parentNode.children.findIndex(
-      (child: any): boolean => child.id === node.id,
+      (child: { id?: string }): boolean => child.id === node.id,
     );
 
     if (parentNode.children.length === 1) {
