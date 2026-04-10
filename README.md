@@ -10,8 +10,6 @@ npm install @segmsh/md
 
 ## Usage
 
-### As a Library
-
 ```typescript
 import MdProcessor from "@segmsh/md";
 
